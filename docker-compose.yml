@@ -1,0 +1,38 @@
+# Локальный запуск обоих сервисов вместе.
+#   docker compose up --build
+# Фронтенд:  http://localhost:5173   Бэкенд/докой API: http://localhost:8000/docs
+#
+# Бэк и фронт живут в разных репозиториях, поэтому фронтенд собирается из соседнего
+# каталога. По умолчанию ожидается ../arbitr-f (git clone .../arbitr-f.git);
+# если он лежит иначе — FRONTEND_PATH=../frontend docker compose up --build
+
+# Фиксируем имя проекта, чтобы контейнеры не зависели от имени каталога.
+name: arbitr
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - arbitr-data:/data          # settings.json и SQLite переживают перезапуск
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build: ${FRONTEND_PATH:-../arbitr-f}
+    environment:
+      BACKEND_URL: http://backend:8000  # nginx проксирует /api и /ws сюда
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  arbitr-data:

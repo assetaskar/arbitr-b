@@ -1,0 +1,12 @@
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+settings.json
+settings.json.tmp
+.git
+.gitignore
+.DS_Store
+README.md
+run.sh

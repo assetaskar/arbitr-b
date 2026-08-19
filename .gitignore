@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Данные рантайма
+settings.json
+settings.json.tmp
+*.db
+
+# Окружение / IDE
+.env
+.DS_Store
+.idea/
+.vscode/
