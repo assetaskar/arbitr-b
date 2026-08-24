@@ -22,6 +22,9 @@ from .models import FundingLeg
 # Минимальный интервал похода на биржи. Запросы чаще обслуживаются из памяти.
 TTL_SEC = float(os.environ.get("ARBITR_CACHE_TTL", "30"))
 
+# Свечи меняются реже тикеров: внутри таймфрейма живёт только последняя.
+CANDLES_TTL_SEC = float(os.environ.get("ARBITR_CANDLES_TTL", "60"))
+
 FUNDING_PERIODS_PER_YEAR = 3 * 365
 FUNDING_PER_SYMBOL_CAP = 100   # макс. по-символьных запросов за раз (биржи без bulk)
 FUNDING_CONCURRENCY = 8
@@ -29,7 +32,12 @@ FUNDING_CONCURRENCY = 8
 # {symbol: {"bid": float, "ask": float, "volume": float | None}}
 Tickers = Dict[str, Dict[str, Optional[float]]]
 
+# [timestamp_ms, open, high, low, close, volume] — формат ccxt, отдаём как есть.
+Candles = List[List[float]]
+
 Key = Tuple[str, str]
+# (биржа, тип рынка, символ, таймфрейм)
+CandleKey = Tuple[str, str, str, str]
 
 
 def _short_err(exc: Exception) -> str:
@@ -87,10 +95,13 @@ class MarketCache:
         self.manager = manager
         self.storage = storage
         self.ttl = ttl_sec
+        self.candles_ttl = CANDLES_TTL_SEC
         self._tickers: Dict[Key, Tuple[Tickers, float]] = {}
         # ex_id -> {"rates": {sym: FundingLeg}, "fetched_at": ts, "sym_ts": {...}, "bulk": bool}
         self._funding: Dict[str, dict] = {}
-        self._locks: Dict[Key, asyncio.Lock] = {}
+        # ключ: (биржа, тип рынка, символ, таймфрейм)
+        self._candles: Dict[CandleKey, Tuple[Candles, float]] = {}
+        self._locks: Dict[tuple, asyncio.Lock] = {}
         self._refreshing: Dict[Key, asyncio.Task] = {}
         # Ошибки фоновых обновлений по ключу (биржа, тип) — показываем их при
         # следующем запросе, но ТОЛЬКО тому клиенту, который выбрал эту биржу.
@@ -104,8 +115,8 @@ class MarketCache:
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
 
-    def _fresh(self, ts: float) -> bool:
-        return (time.time() - ts) < self.ttl
+    def _fresh(self, ts: float, ttl: Optional[float] = None) -> bool:
+        return (time.time() - ts) < (self.ttl if ttl is None else ttl)
 
     def _refresh_in_background(self, key: Key, coro_factory) -> None:
         """Ставит обновление в фон, не плодя дубликатов по одному ключу."""
@@ -199,6 +210,43 @@ class MarketCache:
             if self.storage:
                 await self.storage.save_raw("tickers", ex_id, market_type, out, now)
             return out, now
+
+    # ---------- свечи ----------
+
+    async def candles(
+        self, ex_id: str, market_type: str, symbol: str, timeframe: str, limit: int
+    ) -> Tuple[Candles, Optional[str]]:
+        """Свечи одной ноги графика: (свечи, текст ошибки).
+
+        Ошибка биржи возвращается строкой, а не исключением, и НЕ попадает в
+        self.errors: панель ошибок принадлежит снимку сканера, и разовый клик по
+        паре засорять её не должен. Часть бирж не отдаёт свечи по перпам вовсе —
+        для них это штатный ответ, а не сбой.
+        """
+        key = (ex_id, market_type, symbol, timeframe)
+        cached = self._candles.get(key)
+        if cached and self._fresh(cached[1], self.candles_ttl):
+            return cached[0], None
+
+        async with self._lock(key):
+            # Пока ждали лок, соседний запрос мог всё загрузить.
+            cached = self._candles.get(key)
+            if cached and self._fresh(cached[1], self.candles_ttl):
+                return cached[0], None
+
+            try:
+                inst = await self.manager.get(ex_id, market_type)
+                ccxt_sym = symbol if market_type == "spot" else _perp_symbol_of(symbol)
+                if ccxt_sym not in inst.markets:
+                    return [], f"нет рынка {ccxt_sym}"
+                raw = await inst.fetch_ohlcv(ccxt_sym, timeframe, limit=limit)
+            except Exception as exc:
+                # Устаревший график лучше пустого — отдаём кэш вместе с ошибкой.
+                return (cached[0] if cached else []), _short_err(exc)
+
+            out = [c for c in raw if c and c[0] and c[4]]
+            self._candles[key] = (out, time.time())
+            return out, None
 
     # ---------- funding ----------
 

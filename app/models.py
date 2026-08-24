@@ -139,6 +139,25 @@ class Snapshot(BaseModel):
     errors: Dict[str, str] = Field(default_factory=dict)
 
 
+class CandlesResponse(BaseModel):
+    """Свечи одной ноги графика.
+
+    Ответ всегда 200: недоступная биржа деградирует до строки в error при пустом
+    candles — та же дисциплина, что и у Snapshot.errors. Так фронт рисует ту ногу,
+    что ответила, и подписывает ту, что нет.
+    """
+
+    exchange: str
+    market: str                   # 'spot' | 'swap'
+    symbol: str
+    timeframe: str
+    candles: List[List[float]] = Field(
+        default_factory=list,
+        description="[timestamp_ms, open, high, low, close, volume] — формат ccxt.",
+    )
+    error: Optional[str] = None
+
+
 class ExchangeInfo(BaseModel):
     """Метаданные поддерживаемой биржи для селектора на фронте."""
 

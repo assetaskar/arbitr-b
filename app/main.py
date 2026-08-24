@@ -10,19 +10,24 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from . import arbitrage
 from .cache import MarketCache
 from .config import default_settings
-from .exchange_manager import ExchangeManager, supported_exchanges
-from .models import ExchangeInfo, Settings, Snapshot
+from .exchange_manager import CURATED, ExchangeManager, supported_exchanges
+from .models import CandlesResponse, ExchangeInfo, Settings, Snapshot
 from .storage import Storage
 
 # Клиент не может просить чаще — всё равно вернётся кэш, но сокет не будет молотить.
 MIN_CLIENT_INTERVAL_SEC = 5
+
+# Таймфреймы графика. 4h есть у всех курируемых бирж, кроме Coinbase — он ответит
+# ошибкой строкой, как любая другая биржа, которой запрос не по силам.
+CANDLE_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d")
+CANDLES_MAX_LIMIT = 500
 
 
 @asynccontextmanager
@@ -88,6 +93,43 @@ async def get_default_settings() -> Settings:
 async def scan_once(settings: Settings) -> Snapshot:
     """Разовый расчёт под переданные настройки (без WebSocket)."""
     return await run_scan(settings)
+
+
+@app.get("/api/candles", response_model=CandlesResponse)
+async def get_candles(
+    exchange: str,
+    symbol: str,
+    market: str = "spot",
+    timeframe: str = "1h",
+    limit: int = 200,
+) -> CandlesResponse:
+    """Свечи одной ноги графика.
+
+    Параметры приходят прямо от клиента и уезжают в биржевой API, поэтому
+    проверяются здесь, а не на той стороне.
+    """
+    if exchange not in CURATED:
+        raise HTTPException(status_code=422, detail="Неизвестная биржа")
+    if market not in ("spot", "swap"):
+        raise HTTPException(status_code=422, detail="market: только spot или swap")
+    if timeframe not in CANDLE_TIMEFRAMES:
+        raise HTTPException(
+            status_code=422,
+            detail="timeframe: допустимы " + ", ".join(CANDLE_TIMEFRAMES),
+        )
+
+    symbol = symbol.upper()
+    candles, error = await app.state.cache.candles(
+        exchange, market, symbol, timeframe, max(1, min(limit, CANDLES_MAX_LIMIT))
+    )
+    return CandlesResponse(
+        exchange=exchange,
+        market=market,
+        symbol=symbol,
+        timeframe=timeframe,
+        candles=candles,
+        error=error,
+    )
 
 
 @app.get("/api/health")
