@@ -74,6 +74,12 @@ def _spot_symbol_of(market: dict) -> Optional[str]:
     return f"{base}/{quote}" if base and quote else None
 
 
+def _perp_symbol_of(spot_symbol: str) -> str:
+    """BTC/USDT -> BTC/USDT:USDT — обратное к _spot_symbol_of для линейных перпов."""
+    quote = spot_symbol.split("/")[-1]
+    return f"{spot_symbol}:{quote}"
+
+
 class MarketCache:
     """Кэширует тикеры (spot/swap) и ставки funding по биржам с TTL."""
 
@@ -263,8 +269,7 @@ class MarketCache:
                 # Без bulk: дотягиваем только те пары вселенной, что устарели.
                 perp_of = {}
                 for spot_sym in universe:
-                    quote = spot_sym.split("/")[-1]
-                    perp = f"{spot_sym}:{quote}"
+                    perp = _perp_symbol_of(spot_sym)
                     if perp in inst.markets:
                         perp_of[spot_sym] = perp
                 stale = [s for s in perp_of if not self._fresh(entry["sym_ts"].get(s, 0.0))]
