@@ -22,6 +22,7 @@ CURATED = [
     "coinbase",
     "bingx",
     "cryptocom",
+    "bigone",
 ]
 
 # Человекочитаемые названия для UI.
@@ -38,6 +39,7 @@ DISPLAY_NAMES = {
     "coinbase": "Coinbase",
     "bingx": "BingX",
     "cryptocom": "Crypto.com",
+    "bigone": "BigONE",
 }
 
 
