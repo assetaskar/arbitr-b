@@ -145,4 +145,5 @@ class ExchangeInfo(BaseModel):
     id: str
     name: str
     has_spot: bool
+    has_perp: bool
     has_funding: bool

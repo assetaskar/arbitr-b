@@ -59,6 +59,9 @@ def supported_exchanges() -> List[ExchangeInfo]:
                 id=ex_id,
                 name=DISPLAY_NAMES.get(ex_id, ex_id.capitalize()),
                 has_spot=bool(has.get("fetchTickers") or has.get("fetchTicker")),
+                # Бессрочные фьючерсы: ccxt объявляет типы рынков статически,
+                # поэтому сеть здесь по-прежнему не нужна.
+                has_perp=bool(has.get("swap")),
                 has_funding=bool(
                     has.get("fetchFundingRates") or has.get("fetchFundingRate")
                 ),
