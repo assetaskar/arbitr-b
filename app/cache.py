@@ -50,6 +50,23 @@ def _maybe_float(value) -> Optional[float]:
         return None
 
 
+def _quote_volume(ticker: dict) -> Optional[float]:
+    """Суточный оборот в котировке. Часть бирж отдаёт только базовый объём —
+    пересчитываем его по последней цене.
+
+    None означает «объём неизвестен»: фильтр min_volume_usd такие пары
+    пропускает, тогда как ноль их отсёк бы. Подменять одно другим нельзя.
+    """
+    vol = _maybe_float(ticker.get("quoteVolume"))
+    if vol is not None:
+        return vol
+    base_vol = _maybe_float(ticker.get("baseVolume"))
+    price = _maybe_float(ticker.get("last") or ticker.get("close"))
+    if base_vol is None or not price:
+        return None
+    return base_vol * price
+
+
 def _spot_symbol_of(market: dict) -> Optional[str]:
     """BASE/QUOTE из описания рынка — единый ключ для спота, перпов и funding."""
     base = (market.get("base") or "").upper()
@@ -167,7 +184,7 @@ class MarketCache:
                 out[norm] = {
                     "bid": float(bid),
                     "ask": float(ask),
-                    "volume": _maybe_float(t.get("quoteVolume")),
+                    "volume": _quote_volume(t),
                 }
 
             now = time.time()
